@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>墙路棋</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="panel side-panel">
+        <div class="brand">
+          <span class="brand-mark"></span>
+          <div>
+            <h1>墙路棋</h1>
+            <p id="gameSubtitle">人机对弈</p>
+          </div>
+        </div>
+
+        <div class="segmented" id="modeTabs" aria-label="模式">
+          <button class="active" data-mode="ai">人机</button>
+          <button data-mode="local">同屏</button>
+          <button data-mode="online">联机</button>
+        </div>
+
+        <section class="control-block" id="setupPanel">
+          <label class="field" id="playerCountField">
+            <span>人数</span>
+            <select id="playerCountSelect">
+              <option value="2">2 人</option>
+              <option value="3">3 人</option>
+              <option value="4">4 人</option>
+            </select>
+          </label>
+
+          <label class="field" id="difficultyField">
+            <span>AI</span>
+            <select id="difficultySelect">
+              <option value="easy">轻松</option>
+              <option value="steady" selected>稳健</option>
+              <option value="hard">强手</option>
+            </select>
+          </label>
+
+          <button class="primary" id="newGameButton">新开一局</button>
+        </section>
+
+        <section class="control-block online-panel hidden" id="onlinePanel">
+          <div class="online-step" id="onlineHomeStep">
+            <label class="field">
+              <span>昵称</span>
+              <input id="onlineNameInput" maxlength="14" placeholder="我的名字" />
+            </label>
+            <label class="field">
+              <span>房间人数</span>
+              <select id="onlinePlayerCountSelect">
+                <option value="2">2 人</option>
+                <option value="3">3 人</option>
+                <option value="4">4 人</option>
+              </select>
+            </label>
+            <div class="choice-grid">
+              <button class="primary choice-button" id="createRoomButton">创建房间</button>
+              <button class="secondary choice-button" id="chooseJoinButton">加入房间</button>
+            </div>
+          </div>
+
+          <div class="online-step hidden" id="onlineJoinStep">
+            <div class="step-header">
+              <button class="mini" id="joinBackButton">返回</button>
+              <strong>加入房间</strong>
+            </div>
+            <label class="field">
+              <span>房间码</span>
+              <input id="joinCodeInput" maxlength="5" placeholder="输入 5 位房间码" />
+            </label>
+            <button class="primary" id="joinRoomButton">进入房间</button>
+          </div>
+
+          <div class="online-step hidden" id="onlineRoomStep">
+            <div class="step-header">
+              <button class="mini" id="roomBackButton">返回</button>
+              <strong id="roomStepTitle">房间</strong>
+            </div>
+            <div class="room-card hidden" id="roomCard">
+              <div>
+                <span>房间</span>
+                <strong id="roomCodeText">-----</strong>
+              </div>
+              <button class="mini" id="copyRoomButton" title="复制房间码">复制</button>
+            </div>
+            <div class="room-state" id="roomStateText">等待玩家</div>
+          </div>
+        </section>
+
+        <section class="players" id="playersList"></section>
+      </aside>
+
+      <section class="board-section">
+        <header class="topbar panel">
+          <div>
+            <span class="eyebrow" id="turnEyebrow">第 1 手</span>
+            <h2 id="statusTitle">轮到玩家 1</h2>
+          </div>
+          <div class="toolbox" id="toolbox">
+            <button class="tool active" data-tool="move" title="移动棋子"><span class="tool-icon pawn-icon"></span><span>移动</span></button>
+            <button class="tool" data-tool="h" title="放置横墙"><span class="tool-icon hwall-icon"></span><span>横墙</span></button>
+            <button class="tool" data-tool="v" title="放置竖墙"><span class="tool-icon vwall-icon"></span><span>竖墙</span></button>
+          </div>
+        </header>
+
+        <div class="board-wrap panel">
+          <svg id="boardSvg" role="img" aria-label="墙路棋棋盘"></svg>
+        </div>
+      </section>
+
+      <aside class="panel right-panel">
+        <div class="metric-grid">
+          <div>
+            <span>最短路</span>
+            <strong id="pathMetric">-</strong>
+          </div>
+          <div>
+            <span>余墙</span>
+            <strong id="wallMetric">-</strong>
+          </div>
+        </div>
+        <section>
+          <div class="section-title">记录</div>
+          <ol class="log-list" id="logList"></ol>
+        </section>
+      </aside>
+    </main>
+
+    <div class="toast" id="toast"></div>
+
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

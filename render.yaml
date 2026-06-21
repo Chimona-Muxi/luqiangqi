@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: luqiangqi
+    env: node
+    plan: free
+    buildCommand: ""
+    startCommand: "node server.mjs"
+    envVars:
+      - key: HOST
+        value: "0.0.0.0"
