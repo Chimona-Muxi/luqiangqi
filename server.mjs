@@ -8,7 +8,7 @@ import { applyAction, createInitialState } from "./public/engine.mjs";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
 const port = Number(process.env.PORT || 5174);
-const host = process.env.HOST || "127.0.0.1";
+const host = process.env.HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 
 const rooms = new Map();
 const streams = new Map();
