@@ -42,6 +42,16 @@
             </select>
           </label>
 
+          <label class="field" id="aiEngineField">
+            <span>AI 类型</span>
+            <select id="aiEngineSelect">
+              <option value="builtin" selected>高速策略 AI</option>
+              <option value="ollama">本地千问</option>
+              <option value="api">云端大模型</option>
+              <option value="hybrid">混合外脑</option>
+            </select>
+          </label>
+
           <button class="primary" id="newGameButton">新开一局</button>
         </section>
 
@@ -90,6 +100,13 @@
               <button class="mini" id="copyRoomButton" title="复制房间码">复制</button>
             </div>
             <div class="room-state" id="roomStateText">等待玩家</div>
+            <div class="external-card hidden" id="externalCard">
+              <div>
+                <span>外部接口</span>
+                <strong id="externalLinkText">已启用</strong>
+              </div>
+              <button class="mini" id="copyExternalButton" title="复制外部接口链接">复制</button>
+            </div>
           </div>
         </section>
 

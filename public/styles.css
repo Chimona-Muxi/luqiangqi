@@ -255,6 +255,33 @@ input:focus {
   letter-spacing: 2px;
 }
 
+.external-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(27, 127, 103, 0.28);
+  border-radius: 8px;
+  background: rgba(232, 240, 226, 0.58);
+}
+
+.external-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.external-card strong {
+  display: block;
+  max-width: 160px;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
 .players {
   display: grid;
   gap: 10px;

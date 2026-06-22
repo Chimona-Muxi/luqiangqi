@@ -4,6 +4,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { networkInterfaces } from "node:os";
 import { applyAction, createInitialState } from "./public/engine.mjs";
+import { chooseExternalAiAction, publicExternalState, resolveActionInput } from "./external-ai.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
@@ -22,12 +23,21 @@ const contentTypes = {
   ".svg": "image/svg+xml; charset=utf-8"
 };
 
-function json(res, status, payload) {
+function json(res, status, payload, headers = {}) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store"
+    "Cache-Control": "no-store",
+    ...headers
   });
   res.end(JSON.stringify(payload));
+}
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin": process.env.LQQ_EXTERNAL_ORIGIN || "*",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type,Authorization"
+  };
 }
 
 async function bodyJson(req) {
@@ -48,6 +58,11 @@ function randomCode() {
     code = Array.from({ length: 5 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
   } while (rooms.has(code));
   return code;
+}
+
+function randomExternalKey() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  return Array.from({ length: 16 }, () => alphabet[Math.floor(Math.random() * alphabet.length)]).join("");
 }
 
 function cleanName(name, fallback) {
@@ -79,9 +94,18 @@ function addSeat(room, clientId, name) {
   return seatIndex;
 }
 
+function externalEndpoints(room) {
+  return {
+    stateUrl: `/api/external/rooms/${room.code}/state?key=${room.externalKey}`,
+    actionUrl: `/api/external/rooms/${room.code}/action`,
+    joinUrl: `/api/external/rooms/${room.code}/join`,
+    key: room.externalKey
+  };
+}
+
 function publicRoom(room, clientId = "") {
   const mySeat = room.seats.findIndex((seat) => seat.clientId === clientId);
-  return {
+  const payload = {
     code: room.code,
     playerCount: room.playerCount,
     started: room.started,
@@ -95,6 +119,8 @@ function publicRoom(room, clientId = "") {
     })),
     state: room.state
   };
+  if (mySeat === 0) payload.external = externalEndpoints(room);
+  return payload;
 }
 
 function roomStreams(code) {
@@ -126,14 +152,90 @@ function createRoom(playerCount, hostName, clientId) {
     createdAt: Date.now(),
     updatedAt: Date.now()
   };
+  room.externalKey = randomExternalKey();
   rooms.set(code, room);
   addSeat(room, clientId, hostName);
   return room;
 }
 
+function externalAllowed(req, url, body, room) {
+  const expected = process.env.LQQ_EXTERNAL_TOKEN || room.externalKey || "";
+  if (!expected) return true;
+  const authorization = String(req.headers.authorization || "");
+  const bearer = authorization.toLowerCase().startsWith("bearer ") ? authorization.slice(7).trim() : "";
+  const provided = bearer || url.searchParams.get("key") || body.key || body.token || "";
+  return provided === expected;
+}
+
 async function handleApi(req, res, url) {
   const parts = url.pathname.split("/").filter(Boolean);
   const method = req.method || "GET";
+
+  if (method === "POST" && url.pathname === "/api/ai/action") {
+    const body = await bodyJson(req);
+    if (!body.state?.players?.length) return json(res, 400, { error: "缺少棋局状态" });
+    const result = await chooseExternalAiAction(body.state, {
+      provider: body.provider || body.aiEngine,
+      difficulty: body.difficulty
+    });
+    return json(res, 200, result);
+  }
+
+  if (parts[0] === "api" && parts[1] === "external" && parts[2] === "rooms" && parts[3]) {
+    const code = parts[3].toUpperCase();
+    const room = rooms.get(code);
+    const headers = corsHeaders();
+    if (!room) return json(res, 404, { error: "房间不存在" }, headers);
+
+    if (method === "GET" && parts[4] === "state") {
+      if (!externalAllowed(req, url, {}, room)) return json(res, 403, { error: "外部接口密钥不正确" }, headers);
+      const seat = Number(url.searchParams.get("seat") ?? room.state.current);
+      const ai = publicExternalState(room.state, Number.isInteger(seat) ? seat : room.state.current);
+      return json(res, 200, {
+        room: publicRoom(room),
+        external: {
+          ...externalEndpoints(room),
+          actionExample: {
+            key: room.externalKey,
+            seat: ai.current,
+            id: ai.legalActions[0]?.id || ""
+          }
+        },
+        ai
+      }, headers);
+    }
+
+    if (method === "POST" && parts[4] === "join") {
+      const body = await bodyJson(req);
+      if (!externalAllowed(req, url, body, room)) return json(res, 403, { error: "外部接口密钥不正确" }, headers);
+      const botId = cleanName(body.botId, "bot");
+      const clientId = `external:${room.code}:${botId}`;
+      const seat = addSeat(room, clientId, body.name || "外部AI");
+      if (seat < 0) return json(res, 409, { error: "房间已满" }, headers);
+      broadcast(room);
+      return json(res, 200, { seat, room: publicRoom(room, clientId) }, headers);
+    }
+
+    if (method === "POST" && parts[4] === "action") {
+      const body = await bodyJson(req);
+      if (!externalAllowed(req, url, body, room)) return json(res, 403, { error: "外部接口密钥不正确" }, headers);
+      const seat = Number(body.seat ?? url.searchParams.get("seat") ?? room.state.current);
+      if (!room.started) return json(res, 409, { error: "等待玩家入座" }, headers);
+      if (!Number.isInteger(seat) || seat < 0 || seat >= room.playerCount) return json(res, 400, { error: "座位不正确" }, headers);
+      if (room.state.current !== seat) return json(res, 409, { error: "还没轮到这个座位" }, headers);
+
+      const action = resolveActionInput(room.state, body.action || body.id || body, seat);
+      if (!action) return json(res, 400, { error: "动作不在合法动作列表中" }, headers);
+      const result = applyAction(room.state, action);
+      if (!result.ok) return json(res, 400, { error: result.reason || "这步不合法" }, headers);
+      room.state = result.state;
+      room.updatedAt = Date.now();
+      broadcast(room);
+      return json(res, 200, { room: publicRoom(room), applied: action }, headers);
+    }
+
+    return json(res, 404, { error: "未知外部接口" }, headers);
+  }
 
   if (method === "POST" && url.pathname === "/api/rooms") {
     const body = await bodyJson(req);
@@ -207,6 +309,12 @@ async function serveStatic(res, pathname) {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+
+  if (req.method === "OPTIONS" && url.pathname.startsWith("/api/external/")) {
+    res.writeHead(204, corsHeaders());
+    res.end();
+    return;
+  }
 
   if (url.pathname.startsWith("/api/")) {
     try {
