@@ -176,7 +176,8 @@ async function handleApi(req, res, url) {
     if (!body.state?.players?.length) return json(res, 400, { error: "缺少棋局状态" });
     const result = await chooseExternalAiAction(body.state, {
       provider: body.provider || body.aiEngine,
-      difficulty: body.difficulty
+      difficulty: body.difficulty,
+      config: body.config || {}
     });
     return json(res, 200, result);
   }

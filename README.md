@@ -39,12 +39,11 @@ node server.mjs
 
 ## 外部 AI
 
-人机模式里有 4 种 AI 类型：
+左侧的“外脑”是独立模式，和“人机 / 同屏 / 联机”并列。
 
-- 高速策略 AI：浏览器内置算法，速度最快，也是外部模型失效时的兜底。
-- 本地千问：通过本机 Ollama 调用 `qwen2.5:14b`。
-- 云端大模型：通过 OpenAI 兼容的 Chat Completions API 调用。
-- 混合外脑：先尝试本地千问，再尝试云端 API，失败时自动回到高速策略 AI。
+- 本地模型：用户在页面填写 Ollama 地址和模型名，默认示例是 `qwen2.5:14b`。
+- 云端 API：用户在页面填写自己的 API key、接口地址和模型名；这些内容随单次请求发送，不写入仓库。
+- 高速策略 AI 仍然是原来的人机模式，也会作为外脑不可用时的兜底。
 
 本地千问需要先让 Ollama 服务可访问。通常安装 Ollama 后运行过下面命令即可：
 
@@ -58,7 +57,7 @@ ollama run qwen2.5:14b
 LQQ_OLLAMA_URL=http://127.0.0.1:11434 LQQ_OLLAMA_MODEL=qwen2.5:14b node server.mjs
 ```
 
-云端大模型不会把 key 放到网页里，需要在服务器环境变量中配置：
+如果不想每次在页面输入，云端大模型也可以在服务器环境变量中预设：
 
 ```text
 LQQ_LLM_API_KEY=你的 API key
@@ -73,6 +72,8 @@ LQQ_LLM_API_URL=https://example.com/v1/chat/completions
 ```
 
 联机房间还提供外部对战接口。创建房间的返回数据里会包含 `external.stateUrl`、`external.actionUrl` 和 `external.key`，外部程序可以读取局面、选择 `legalActions` 中的 id，再提交动作。
+
+外部 AI 收到的局面会包含规则说明、当前棋局、合法动作列表和返回格式。模型不需要自己计算坐标，只要从 `legalActions` 里选择一个 `id`，服务器会校验并执行落子。
 
 ## 规则
 

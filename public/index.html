@@ -21,6 +21,7 @@
           <button class="active" data-mode="ai">人机</button>
           <button data-mode="local">同屏</button>
           <button data-mode="online">联机</button>
+          <button data-mode="model">外脑</button>
         </div>
 
         <section class="control-block" id="setupPanel">
@@ -42,17 +43,75 @@
             </select>
           </label>
 
-          <label class="field" id="aiEngineField">
-            <span>AI 类型</span>
-            <select id="aiEngineSelect">
-              <option value="builtin" selected>高速策略 AI</option>
-              <option value="ollama">本地千问</option>
-              <option value="api">云端大模型</option>
-              <option value="hybrid">混合外脑</option>
-            </select>
-          </label>
-
           <button class="primary" id="newGameButton">新开一局</button>
+        </section>
+
+        <section class="control-block model-panel hidden" id="modelPanel">
+          <div class="model-step" id="modelHomeStep">
+            <div class="choice-grid">
+              <button class="primary choice-button" id="chooseLocalModelButton">本地模型</button>
+              <button class="secondary choice-button" id="chooseApiModelButton">云端 API</button>
+            </div>
+          </div>
+
+          <div class="model-step hidden" id="modelLocalStep">
+            <div class="step-header">
+              <button class="mini" id="modelLocalBackButton">返回</button>
+              <strong>本地模型</strong>
+            </div>
+            <div class="command-card">
+              <div>
+                <span>启动命令</span>
+                <code id="ollamaCommandText">ollama run qwen2.5:14b</code>
+              </div>
+              <button class="mini" id="copyOllamaCommandButton">复制</button>
+            </div>
+            <label class="field">
+              <span>地址</span>
+              <input id="ollamaUrlInput" value="http://127.0.0.1:11434" />
+            </label>
+            <label class="field">
+              <span>模型</span>
+              <input id="ollamaModelInput" value="qwen2.5:14b" />
+            </label>
+            <label class="field">
+              <span>强度</span>
+              <select id="modelLocalDifficultySelect">
+                <option value="easy">轻松</option>
+                <option value="steady" selected>稳健</option>
+                <option value="hard">强手</option>
+              </select>
+            </label>
+            <button class="primary" id="startLocalModelButton">开始对局</button>
+          </div>
+
+          <div class="model-step hidden" id="modelApiStep">
+            <div class="step-header">
+              <button class="mini" id="modelApiBackButton">返回</button>
+              <strong>云端 API</strong>
+            </div>
+            <label class="field">
+              <span>API Key</span>
+              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="sk-..." />
+            </label>
+            <label class="field">
+              <span>接口地址</span>
+              <input id="apiBaseUrlInput" value="https://api.openai.com/v1" />
+            </label>
+            <label class="field">
+              <span>模型</span>
+              <input id="apiModelInput" value="gpt-4o-mini" />
+            </label>
+            <label class="field">
+              <span>强度</span>
+              <select id="modelApiDifficultySelect">
+                <option value="easy">轻松</option>
+                <option value="steady" selected>稳健</option>
+                <option value="hard">强手</option>
+              </select>
+            </label>
+            <button class="primary" id="startApiModelButton">开始对局</button>
+          </div>
         </section>
 
         <section class="control-block online-panel hidden" id="onlinePanel">

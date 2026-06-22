@@ -15,6 +15,14 @@ const DEFAULT_API_MODEL = "gpt-4o-mini";
 const REQUEST_TIMEOUT_MS = 14000;
 const WALL_PROMPT_LIMIT = 36;
 
+export const EXTERNAL_RULES = [
+  "这是墙路棋/Quoridor：棋盘为 9x9，玩家从自己起点出发，先到达对边者获胜。",
+  "每回合只能二选一：移动棋子，或放置一面墙。",
+  "移动和放墙都必须从 legalActions 里选择，不能自己编坐标。",
+  "动作 id 形如 move:E8 或 wall:h:E7。提交动作时只需要返回其中一个 id。",
+  "服务器会校验动作是否合法并真正落子。"
+];
+
 function providerLabel(provider) {
   return {
     ollama: "本地千问",
@@ -262,9 +270,9 @@ async function fetchWithTimeout(url, options, timeoutMs = REQUEST_TIMEOUT_MS) {
   }
 }
 
-async function callOllama(messages) {
-  const baseUrl = normalizeBaseUrl(process.env.LQQ_OLLAMA_URL || process.env.OLLAMA_HOST, DEFAULT_OLLAMA_URL);
-  const model = process.env.LQQ_OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL;
+async function callOllama(messages, config = {}) {
+  const baseUrl = normalizeBaseUrl(config.ollamaUrl || process.env.LQQ_OLLAMA_URL || process.env.OLLAMA_HOST, DEFAULT_OLLAMA_URL);
+  const model = config.ollamaModel || process.env.LQQ_OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL;
   const response = await fetchWithTimeout(`${baseUrl}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -283,15 +291,16 @@ async function callOllama(messages) {
   return data?.message?.content || data?.response || "";
 }
 
-function apiChatUrl() {
+function apiChatUrl(config = {}) {
+  if (config.apiUrl) return config.apiUrl;
   if (process.env.LQQ_LLM_API_URL) return process.env.LQQ_LLM_API_URL;
   if (process.env.OPENAI_API_URL) return process.env.OPENAI_API_URL;
-  const base = normalizeBaseUrl(process.env.LQQ_LLM_BASE_URL || process.env.OPENAI_BASE_URL, "https://api.openai.com/v1");
+  const base = normalizeBaseUrl(config.apiBaseUrl || process.env.LQQ_LLM_BASE_URL || process.env.OPENAI_BASE_URL, "https://api.openai.com/v1");
   return base.endsWith("/chat/completions") ? base : `${base}/chat/completions`;
 }
 
-async function callApiModel(messages) {
-  const apiKey = process.env.LQQ_LLM_API_KEY || process.env.OPENAI_API_KEY || "";
+async function callApiModel(messages, config = {}) {
+  const apiKey = config.apiKey || process.env.LQQ_LLM_API_KEY || process.env.OPENAI_API_KEY || "";
   if (!apiKey && process.env.LQQ_LLM_ALLOW_NO_KEY !== "1") {
     throw new Error("未配置大模型 API key");
   }
@@ -299,23 +308,23 @@ async function callApiModel(messages) {
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-  const response = await fetchWithTimeout(apiChatUrl(), {
+  const response = await fetchWithTimeout(apiChatUrl(config), {
     method: "POST",
     headers,
     body: JSON.stringify({
-      model: process.env.LQQ_LLM_MODEL || process.env.OPENAI_MODEL || DEFAULT_API_MODEL,
+      model: config.apiModel || process.env.LQQ_LLM_MODEL || process.env.OPENAI_MODEL || DEFAULT_API_MODEL,
       messages,
-      temperature: Number(process.env.LQQ_LLM_TEMPERATURE || 0.15)
+      temperature: Number(config.temperature || process.env.LQQ_LLM_TEMPERATURE || 0.15)
     })
-  }, Number(process.env.LQQ_LLM_TIMEOUT_MS || REQUEST_TIMEOUT_MS));
+  }, Number(config.timeoutMs || process.env.LQQ_LLM_TIMEOUT_MS || REQUEST_TIMEOUT_MS));
   if (!response.ok) throw new Error(`API 返回 ${response.status}`);
   const data = await response.json();
   return data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
 }
 
-async function askProvider(provider, messages) {
-  if (provider === "ollama") return callOllama(messages);
-  if (provider === "api") return callApiModel(messages);
+async function askProvider(provider, messages, config = {}) {
+  if (provider === "ollama") return callOllama(messages, config);
+  if (provider === "api") return callApiModel(messages, config);
   throw new Error(`未知外部 AI：${provider}`);
 }
 
@@ -323,6 +332,7 @@ export async function chooseExternalAiAction(state, options = {}) {
   const playerId = state.current;
   const difficulty = options.difficulty || state.aiDifficulty || "steady";
   const provider = options.provider || state.aiEngine || "ollama";
+  const config = options.config || {};
   const fallback = chooseAiAction(state, difficulty);
   const actions = legalActionEntries(state, playerId);
   if (!actions.length) return { action: fallback, source: "builtin-fallback", note: "没有可用外部动作" };
@@ -333,7 +343,7 @@ export async function chooseExternalAiAction(state, options = {}) {
 
   for (const item of providers) {
     try {
-      const text = await askProvider(item, messages);
+      const text = await askProvider(item, messages, config);
       const action = resolveModelAction(state, text, playerId, actions);
       if (action) return { action, source: item, note: providerLabel(item) };
       errors.push(`${providerLabel(item)} 返回了无法识别的动作`);
@@ -371,8 +381,10 @@ export function publicExternalState(state, playerId = state.current) {
       v: (state.walls.v || []).map((wall) => cellName(wall.row, wall.col))
     },
     legalActions: actions,
+    rules: EXTERNAL_RULES,
     responseFormat: {
-      id: actions[0]?.id || "move:E8"
+      id: actions[0]?.id || "move:E8",
+      note: "从 legalActions 选择一个 id，不要提交不在列表里的动作。"
     }
   };
 }

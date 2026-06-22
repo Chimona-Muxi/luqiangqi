@@ -21,13 +21,30 @@ const els = {
   gameSubtitle: document.querySelector("#gameSubtitle"),
   setupPanel: document.querySelector("#setupPanel"),
   onlinePanel: document.querySelector("#onlinePanel"),
+  modelPanel: document.querySelector("#modelPanel"),
   playerCountField: document.querySelector("#playerCountField"),
   difficultyField: document.querySelector("#difficultyField"),
-  aiEngineField: document.querySelector("#aiEngineField"),
   playerCount: document.querySelector("#playerCountSelect"),
   difficulty: document.querySelector("#difficultySelect"),
-  aiEngine: document.querySelector("#aiEngineSelect"),
   onlinePlayerCount: document.querySelector("#onlinePlayerCountSelect"),
+  modelHomeStep: document.querySelector("#modelHomeStep"),
+  modelLocalStep: document.querySelector("#modelLocalStep"),
+  modelApiStep: document.querySelector("#modelApiStep"),
+  chooseLocalModel: document.querySelector("#chooseLocalModelButton"),
+  chooseApiModel: document.querySelector("#chooseApiModelButton"),
+  modelLocalBack: document.querySelector("#modelLocalBackButton"),
+  modelApiBack: document.querySelector("#modelApiBackButton"),
+  ollamaCommand: document.querySelector("#ollamaCommandText"),
+  copyOllamaCommand: document.querySelector("#copyOllamaCommandButton"),
+  ollamaUrl: document.querySelector("#ollamaUrlInput"),
+  ollamaModel: document.querySelector("#ollamaModelInput"),
+  modelLocalDifficulty: document.querySelector("#modelLocalDifficultySelect"),
+  startLocalModel: document.querySelector("#startLocalModelButton"),
+  apiKey: document.querySelector("#apiKeyInput"),
+  apiBaseUrl: document.querySelector("#apiBaseUrlInput"),
+  apiModel: document.querySelector("#apiModelInput"),
+  modelApiDifficulty: document.querySelector("#modelApiDifficultySelect"),
+  startApiModel: document.querySelector("#startApiModelButton"),
   newGame: document.querySelector("#newGameButton"),
   toolbox: document.querySelector("#toolbox"),
   statusTitle: document.querySelector("#statusTitle"),
@@ -60,7 +77,8 @@ const els = {
 const subtitles = {
   ai: "人机对弈",
   local: "同屏多人",
-  online: "房间联机"
+  online: "房间联机",
+  model: "外脑对弈"
 };
 
 let mode = "ai";
@@ -68,6 +86,8 @@ let tool = "move";
 let onlineRoom = null;
 let onlineStep = "home";
 let onlineRoomRole = "host";
+let modelStep = "home";
+let modelConfig = null;
 let eventSource = null;
 let game = createGame();
 let aiTimer = null;
@@ -88,27 +108,33 @@ function getClientId() {
 
 function createGame() {
   const onlineCount = Number(els.onlinePlayerCount?.value || els.playerCount?.value || 2);
-  const playerCount = mode === "ai" ? 2 : mode === "online" ? onlineCount : Number(els.playerCount?.value || 2);
-  const aiEngine = els.aiEngine?.value || "builtin";
+  const playerCount = mode === "ai" || mode === "model" ? 2 : mode === "online" ? onlineCount : Number(els.playerCount?.value || 2);
+  const external = mode === "model";
+  const aiName = external ? modelAiName() : "AI";
   const state = createInitialState({
     playerCount,
     mode,
-    aiDifficulty: els.difficulty?.value || "steady",
-    aiEngine,
-    aiSlots: mode === "ai" ? [1] : [],
-    names: mode === "ai" ? ["你", aiEngineName(aiEngine)] : Array.from({ length: playerCount }, (_, index) => `玩家 ${index + 1}`)
+    aiDifficulty: external ? modelConfig?.difficulty || "steady" : els.difficulty?.value || "steady",
+    aiEngine: external ? modelConfig?.provider || "ollama" : "builtin",
+    aiSlots: mode === "ai" || mode === "model" ? [1] : [],
+    names: mode === "ai" || mode === "model" ? ["你", aiName] : Array.from({ length: playerCount }, (_, index) => `玩家 ${index + 1}`)
   });
-  state.aiEngine = aiEngine;
+  state.aiEngine = external ? modelConfig?.provider || "ollama" : "builtin";
   return state;
 }
 
-function aiEngineName(value) {
+function modelAiName() {
   return {
-    builtin: "高速 AI",
-    ollama: "千问",
-    api: "云端 AI",
-    hybrid: "混合 AI"
-  }[value] || "AI";
+    ollama: "本地模型",
+    api: "云端模型"
+  }[modelConfig?.provider] || "外脑";
+}
+
+function providerName(value) {
+  return {
+    ollama: "本地模型",
+    api: "云端 API"
+  }[value] || "外脑";
 }
 
 function showToast(message) {
@@ -137,16 +163,19 @@ function currentPlayer() {
 
 function canAct() {
   if (game.winner !== null) return false;
+  if (mode === "model" && !modelConfig) return false;
   if (mode === "online") return onlineRoom?.started && onlineRoom.mySeat === game.current;
-  if (mode === "ai") return currentPlayer()?.kind !== "ai";
+  if (mode === "ai" || mode === "model") return currentPlayer()?.kind !== "ai";
   return true;
 }
 
 function actionLockedReason() {
   if (game.winner !== null) return "对局已结束";
+  if (mode === "model" && !modelConfig) return "请先选择外脑";
   if (mode === "online" && !onlineRoom?.started) return "等待玩家入座";
   if (mode === "online" && onlineRoom?.mySeat !== game.current) return "还没轮到你";
   if (mode === "ai" && currentPlayer()?.kind === "ai") return "AI 思考中";
+  if (mode === "model" && currentPlayer()?.kind === "ai") return "外脑思考中";
   return "";
 }
 
@@ -159,6 +188,23 @@ function resetOfflineGame() {
   tool = "move";
   render();
   queueAi();
+}
+
+function resetModelHome() {
+  aiRequestId += 1;
+  closeEvents();
+  onlineRoom = null;
+  modelStep = "home";
+  modelConfig = null;
+  game = createInitialState({ playerCount: 2, mode: "model", names: ["你", "外脑"] });
+  tool = "move";
+  render();
+}
+
+function startModelGame(config) {
+  modelConfig = config;
+  modelStep = config.provider === "api" ? "api" : "local";
+  resetOfflineGame();
 }
 
 function closeEvents() {
@@ -274,47 +320,49 @@ async function sendAction(action) {
 
 function queueAi() {
   clearTimeout(aiTimer);
-  if (mode !== "ai" || game.winner !== null || currentPlayer()?.kind !== "ai") return;
+  if ((mode !== "ai" && mode !== "model") || game.winner !== null || currentPlayer()?.kind !== "ai") return;
   const requestId = aiRequestId + 1;
   aiRequestId = requestId;
   aiTimer = setTimeout(async () => {
     const snapshot = JSON.parse(JSON.stringify(game));
-    const engine = snapshot.aiEngine || "builtin";
+    const external = mode === "model";
+    const engine = external ? modelConfig?.provider || snapshot.aiEngine || "ollama" : "builtin";
     let action = null;
     let note = "";
 
-    if (engine === "builtin") {
+    if (!external) {
       action = chooseAiAction(snapshot, snapshot.aiDifficulty);
     } else {
       try {
         const result = await api("/api/ai/action", {
           state: snapshot,
           provider: engine,
-          difficulty: snapshot.aiDifficulty
+          difficulty: snapshot.aiDifficulty,
+          config: modelConfig
         });
         action = result.action;
         note = result.note || "";
-        if (result.source === "builtin-fallback") showToast("外部 AI 暂不可用，已用高速 AI");
+        if (result.source === "builtin-fallback") showToast("外脑暂不可用，已用高速 AI");
       } catch (error) {
         action = chooseAiAction(snapshot, snapshot.aiDifficulty);
         note = error.message;
-        showToast("外部 AI 未响应，已用高速 AI");
+        showToast("外脑未响应，已用高速 AI");
       }
     }
 
-    if (requestId !== aiRequestId || mode !== "ai" || game.winner !== null || currentPlayer()?.kind !== "ai") return;
+    if (requestId !== aiRequestId || (mode !== "ai" && mode !== "model") || game.winner !== null || currentPlayer()?.kind !== "ai") return;
     if (!action) return;
     const result = applyAction(game, action);
     if (result.ok) {
       game = result.state;
       render();
-    } else if (engine !== "builtin") {
+    } else if (external) {
       const fallback = chooseAiAction(game, game.aiDifficulty);
       const fallbackResult = fallback ? applyAction(game, fallback) : null;
       if (fallbackResult?.ok) {
         game = fallbackResult.state;
         render();
-        showToast(note || "外部 AI 返回了非法动作，已用高速 AI");
+        showToast(note || "外脑返回了非法动作，已用高速 AI");
       }
     }
   }, 520);
@@ -485,7 +533,12 @@ function renderPlayers() {
 
 function renderLog() {
   els.log.replaceChildren();
-  const entries = game.log?.length ? game.log : [{ text: mode === "online" && !onlineRoom?.started ? "等待房间满员" : "棋局开始" }];
+  const startText = mode === "online" && !onlineRoom?.started
+    ? "等待房间满员"
+    : mode === "model" && !modelConfig
+      ? "选择一个外脑类型"
+      : "棋局开始";
+  const entries = game.log?.length ? game.log : [{ text: startText }];
   for (const entry of entries.slice(0, 18)) {
     const item = document.createElement("li");
     item.textContent = entry.text;
@@ -500,6 +553,8 @@ function renderStatus() {
 
   if (game.winner !== null) {
     els.statusTitle.textContent = `${game.players[game.winner].name} 获胜`;
+  } else if (mode === "model" && !modelConfig) {
+    els.statusTitle.textContent = "选择外脑";
   } else if (mode === "online" && !onlineRoom?.started) {
     const occupied = onlineRoom?.seats?.filter((seat) => seat.occupied).length || 0;
     els.statusTitle.textContent = `等待玩家 ${occupied}/${game.playerCount}`;
@@ -514,6 +569,9 @@ function renderStatus() {
   els.onlineHomeStep.classList.toggle("hidden", onlineStep !== "home");
   els.onlineJoinStep.classList.toggle("hidden", onlineStep !== "join");
   els.onlineRoomStep.classList.toggle("hidden", onlineStep !== "room");
+  els.modelHomeStep.classList.toggle("hidden", modelStep !== "home");
+  els.modelLocalStep.classList.toggle("hidden", modelStep !== "local");
+  els.modelApiStep.classList.toggle("hidden", modelStep !== "api");
   els.roomCard.classList.toggle("hidden", !onlineRoom || onlineStep !== "room");
   els.externalCard.classList.toggle("hidden", !onlineRoom?.external || onlineStep !== "room");
   els.roomStepTitle.textContent = onlineRoomRole === "guest" ? "已加入房间" : "房间已创建";
@@ -524,11 +582,11 @@ function renderStatus() {
     : "等待玩家";
   els.roomCode.textContent = onlineRoom?.code || "-----";
   els.externalLinkText.textContent = onlineRoom?.external ? "外部可接入" : "未启用";
-  els.setupPanel.classList.toggle("hidden", mode === "online");
+  els.setupPanel.classList.toggle("hidden", mode === "online" || mode === "model");
   els.onlinePanel.classList.toggle("hidden", mode !== "online");
+  els.modelPanel.classList.toggle("hidden", mode !== "model");
   els.playerCountField.classList.toggle("hidden", mode === "ai");
   els.difficultyField.classList.toggle("hidden", mode !== "ai");
-  els.aiEngineField.classList.toggle("hidden", mode !== "ai");
 }
 
 function renderControls() {
@@ -554,11 +612,16 @@ els.modeTabs.addEventListener("click", (event) => {
   if (!button) return;
   mode = button.dataset.mode;
   if (mode === "online") {
+    aiRequestId += 1;
     game = createInitialState({ playerCount: Number(els.onlinePlayerCount.value), mode: "online" });
     onlineRoom = null;
     onlineStep = "home";
     closeEvents();
     render();
+    return;
+  }
+  if (mode === "model") {
+    resetModelHome();
     return;
   }
   resetOfflineGame();
@@ -586,7 +649,38 @@ els.onlinePlayerCount.addEventListener("change", () => {
   }
 });
 els.difficulty.addEventListener("change", resetOfflineGame);
-els.aiEngine.addEventListener("change", resetOfflineGame);
+els.chooseLocalModel.addEventListener("click", () => {
+  modelStep = "local";
+  render();
+});
+els.chooseApiModel.addEventListener("click", () => {
+  modelStep = "api";
+  render();
+});
+els.modelLocalBack.addEventListener("click", resetModelHome);
+els.modelApiBack.addEventListener("click", resetModelHome);
+els.copyOllamaCommand.addEventListener("click", async () => {
+  await navigator.clipboard?.writeText(els.ollamaCommand.textContent);
+  showToast("启动命令已复制");
+});
+els.startLocalModel.addEventListener("click", () => {
+  startModelGame({
+    provider: "ollama",
+    difficulty: els.modelLocalDifficulty.value,
+    ollamaUrl: els.ollamaUrl.value.trim(),
+    ollamaModel: els.ollamaModel.value.trim()
+  });
+});
+els.startApiModel.addEventListener("click", () => {
+  if (!els.apiKey.value.trim()) return showToast("请输入 API Key");
+  startModelGame({
+    provider: "api",
+    difficulty: els.modelApiDifficulty.value,
+    apiKey: els.apiKey.value.trim(),
+    apiBaseUrl: els.apiBaseUrl.value.trim(),
+    apiModel: els.apiModel.value.trim()
+  });
+});
 els.createRoom.addEventListener("click", createRoom);
 els.chooseJoin.addEventListener("click", () => {
   onlineStep = "join";
