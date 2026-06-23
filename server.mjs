@@ -266,14 +266,36 @@ function compactAction(action) {
   return `wall:${action.orientation}:${cellName(action.row, action.col)}`;
 }
 
-function externalStatePayload(room, requestedSeat, origin = "") {
+function freshPair(value, fallback) {
+  const fresh = Number(value);
+  if (Number.isFinite(fresh)) {
+    const current = Math.floor(fresh);
+    return { current, next: current + 1 };
+  }
+  return { current: null, next: fallback };
+}
+
+function externalStatePayload(room, requestedSeat, origin = "", freshValue = null) {
   const seat = normalizeSeat(room, requestedSeat);
   const endpoints = externalEndpoints(room, seat, origin);
   const serverNow = Date.now();
-  const freshStatePath = `${endpoints.statePath}&fresh=${serverNow}`;
+  const fresh = freshPair(freshValue, serverNow);
+  const freshStatePath = `${endpoints.statePath}&fresh=${fresh.next}`;
   const rawAi = publicExternalState(room.state, seat);
   const canAct = room.started && room.state.current === seat && !room.state.winner;
-  const legalActions = canAct ? rawAi.legalActions : [];
+  const actionUrlFor = (id) => {
+    const path = `${endpoints.actionPath}?key=${encodeURIComponent(room.externalKey)}&seat=${seat}&id=${encodeURIComponent(id)}`;
+    return {
+      url: withOrigin(origin, path),
+      path
+    };
+  };
+  const legalActions = canAct
+    ? rawAi.legalActions.map((entry) => ({
+      ...entry,
+      ...actionUrlFor(entry.id)
+    }))
+    : [];
   const waitingReason = !room.seats[seat]?.clientId
     ? "这个座位还未入座，请先打开 joinUrl。"
     : !room.started
@@ -295,10 +317,14 @@ function externalStatePayload(room, requestedSeat, origin = "") {
     room: publicRoom(room),
     serverNow,
     roomUpdatedAt: room.updatedAt,
+    fresh: fresh.current,
+    nextFresh: fresh.next,
     external: {
       ...endpoints,
       freshStateUrl: withOrigin(origin, freshStatePath),
       freshStatePath,
+      nextStateUrl: withOrigin(origin, freshStatePath),
+      nextStatePath: freshStatePath,
       joinExample: {
         url: endpoints.joinUrl,
         path: endpoints.joinPath
@@ -308,9 +334,8 @@ function externalStatePayload(room, requestedSeat, origin = "") {
         path: endpoints.statePath
       },
       actionExample: {
-        url: legalActions[0]
-          ? withOrigin(origin, `${endpoints.actionPath}?key=${encodeURIComponent(room.externalKey)}&seat=${seat}&id=${encodeURIComponent(legalActions[0].id)}`)
-          : "",
+        url: legalActions[0]?.url || "",
+        path: legalActions[0]?.path || "",
         key: room.externalKey,
         seat,
         id: legalActions[0]?.id || ""
@@ -325,6 +350,9 @@ function externalStatePayload(room, requestedSeat, origin = "") {
       waitingReason,
       serverNow,
       roomUpdatedAt: room.updatedAt,
+      fresh: fresh.current,
+      nextFresh: fresh.next,
+      nextStateUrl: withOrigin(origin, freshStatePath),
       moveHistory: room.state.moveHistory || []
     }
   };
@@ -353,7 +381,23 @@ async function handleApi(req, res, url) {
 
     if (method === "GET" && parts[4] === "state") {
       if (!externalAllowed(req, url, {}, room)) return json(res, 403, { error: "外部接口密钥不正确" }, headers);
-      return json(res, 200, externalStatePayload(room, parseSeat(url.searchParams.get("seat"), defaultExternalSeat(room)), requestOrigin(req)), headers);
+      const payload = externalStatePayload(room, parseSeat(url.searchParams.get("seat"), defaultExternalSeat(room)), requestOrigin(req), url.searchParams.get("fresh"));
+      const incomingFresh = url.searchParams.get("fresh");
+      if (incomingFresh !== null) {
+        const nextFresh = freshPair(incomingFresh, Date.now()).next;
+        const connector = payload.external.statePath.includes("?") ? "&" : "?";
+        const nextPath = `${payload.external.statePath}${connector}fresh=${nextFresh}`;
+        payload.fresh = Number(incomingFresh);
+        payload.nextFresh = nextFresh;
+        payload.external.freshStatePath = nextPath;
+        payload.external.freshStateUrl = withOrigin(requestOrigin(req), nextPath);
+        payload.external.nextStatePath = nextPath;
+        payload.external.nextStateUrl = withOrigin(requestOrigin(req), nextPath);
+        payload.ai.fresh = Number(incomingFresh);
+        payload.ai.nextFresh = nextFresh;
+        payload.ai.nextStateUrl = payload.external.nextStateUrl;
+      }
+      return json(res, 200, payload, headers);
     }
 
     if ((method === "GET" || method === "POST") && parts[4] === "join") {
