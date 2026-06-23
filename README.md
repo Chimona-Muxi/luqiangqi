@@ -75,6 +75,16 @@ LQQ_LLM_API_URL=https://example.com/v1/chat/completions
 
 外部 AI 收到的局面会包含规则说明、当前棋局、合法动作列表和返回格式。模型不需要自己计算坐标，只要从 `legalActions` 里选择一个 `id`，服务器会校验并执行落子。
 
+如果外部 AI 只能打开链接、不能稳定发送 POST，也可以使用 GET 形式：
+
+```text
+GET /api/external/rooms/房间码/join?key=密钥&seat=1&name=GPT
+GET /api/external/rooms/房间码/state?key=密钥&seat=1
+GET /api/external/rooms/房间码/action?key=密钥&seat=1&id=move:E8
+```
+
+`state?seat=1` 会返回玩家二视角的合法动作；`action` 只有在轮到该座位时才会执行。
+
 ## 规则
 
 - 9x9 棋盘，每名玩家从自己的边中点出发，抵达对边即胜。

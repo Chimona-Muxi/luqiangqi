@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { networkInterfaces } from "node:os";
-import { applyAction, createInitialState } from "./public/engine.mjs";
+import { applyAction, cellName, createInitialState } from "./public/engine.mjs";
 import { chooseExternalAiAction, publicExternalState, resolveActionInput } from "./external-ai.mjs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -94,6 +94,32 @@ function addSeat(room, clientId, name) {
   return seatIndex;
 }
 
+function addExternalSeat(room, seatIndex, clientId, name) {
+  const existing = room.seats.findIndex((seat) => seat.clientId === clientId);
+  if (existing >= 0) {
+    room.seats[existing].connected = true;
+    room.seats[existing].name = cleanName(name, room.seats[existing].name);
+    room.state.players[existing].name = room.seats[existing].name;
+    room.updatedAt = Date.now();
+    return existing;
+  }
+
+  const target = Number.isInteger(seatIndex) ? seatIndex : room.seats.findIndex((seat) => !seat.clientId);
+  if (target < 0 || target >= room.playerCount) return -1;
+  if (room.seats[target].clientId) return -1;
+
+  const displayName = cleanName(name, `外部AI ${target + 1}`);
+  room.seats[target] = {
+    clientId,
+    name: displayName,
+    connected: true
+  };
+  room.state.players[target].name = displayName;
+  room.started = room.seats.every((seat) => Boolean(seat.clientId));
+  room.updatedAt = Date.now();
+  return target;
+}
+
 function externalEndpoints(room) {
   return {
     stateUrl: `/api/external/rooms/${room.code}/state?key=${room.externalKey}`,
@@ -167,6 +193,47 @@ function externalAllowed(req, url, body, room) {
   return provided === expected;
 }
 
+function parseSeat(value, fallback) {
+  const seat = Number(value);
+  return Number.isInteger(seat) ? seat : fallback;
+}
+
+function compactAction(action) {
+  if (!action) return "";
+  if (action.type === "move") return `move:${cellName(action.row, action.col)}`;
+  return `wall:${action.orientation}:${cellName(action.row, action.col)}`;
+}
+
+function externalStatePayload(room, requestedSeat) {
+  const seat = Number.isInteger(requestedSeat) && requestedSeat >= 0 && requestedSeat < room.playerCount
+    ? requestedSeat
+    : room.state.current;
+  const ai = publicExternalState(room.state, seat);
+  return {
+    ok: true,
+    room: publicRoom(room),
+    external: {
+      ...externalEndpoints(room),
+      joinExample: {
+        url: `/api/external/rooms/${room.code}/join?key=${room.externalKey}&seat=${seat}&name=GPT`
+      },
+      actionExample: {
+        url: `/api/external/rooms/${room.code}/action?key=${room.externalKey}&seat=${seat}&id=${encodeURIComponent(ai.legalActions[0]?.id || "")}`,
+        key: room.externalKey,
+        seat,
+        id: ai.legalActions[0]?.id || ""
+      }
+    },
+    ai: {
+      ...ai,
+      requestedSeat: seat,
+      isTurn: room.state.current === seat,
+      seatOccupied: Boolean(room.seats[seat]?.clientId),
+      seatConnected: Boolean(room.seats[seat]?.connected)
+    }
+  };
+}
+
 async function handleApi(req, res, url) {
   const parts = url.pathname.split("/").filter(Boolean);
   const method = req.method || "GET";
@@ -190,49 +257,51 @@ async function handleApi(req, res, url) {
 
     if (method === "GET" && parts[4] === "state") {
       if (!externalAllowed(req, url, {}, room)) return json(res, 403, { error: "外部接口密钥不正确" }, headers);
-      const seat = Number(url.searchParams.get("seat") ?? room.state.current);
-      const ai = publicExternalState(room.state, Number.isInteger(seat) ? seat : room.state.current);
+      return json(res, 200, externalStatePayload(room, parseSeat(url.searchParams.get("seat"), room.state.current)), headers);
+    }
+
+    if ((method === "GET" || method === "POST") && parts[4] === "join") {
+      const body = method === "GET" ? {} : await bodyJson(req);
+      if (!externalAllowed(req, url, body, room)) return json(res, 403, { error: "外部接口密钥不正确" }, headers);
+      const seatIndex = parseSeat(body.seat ?? url.searchParams.get("seat"), NaN);
+      const botId = cleanName(body.botId || url.searchParams.get("botId"), `bot-${Number.isInteger(seatIndex) ? seatIndex : "auto"}`);
+      const clientId = `external:${room.code}:${botId}`;
+      const seat = addExternalSeat(room, seatIndex, clientId, body.name || url.searchParams.get("name") || "外部AI");
+      if (seat < 0) return json(res, 409, { error: "房间已满" }, headers);
+      broadcast(room);
       return json(res, 200, {
-        room: publicRoom(room),
-        external: {
-          ...externalEndpoints(room),
-          actionExample: {
-            key: room.externalKey,
-            seat: ai.current,
-            id: ai.legalActions[0]?.id || ""
-          }
-        },
-        ai
+        ok: true,
+        seat,
+        room: publicRoom(room, clientId),
+        next: room.state.current,
+        state: externalStatePayload(room, seat).ai
       }, headers);
     }
 
-    if (method === "POST" && parts[4] === "join") {
-      const body = await bodyJson(req);
-      if (!externalAllowed(req, url, body, room)) return json(res, 403, { error: "外部接口密钥不正确" }, headers);
-      const botId = cleanName(body.botId, "bot");
-      const clientId = `external:${room.code}:${botId}`;
-      const seat = addSeat(room, clientId, body.name || "外部AI");
-      if (seat < 0) return json(res, 409, { error: "房间已满" }, headers);
-      broadcast(room);
-      return json(res, 200, { seat, room: publicRoom(room, clientId) }, headers);
-    }
-
-    if (method === "POST" && parts[4] === "action") {
-      const body = await bodyJson(req);
+    if ((method === "GET" || method === "POST") && parts[4] === "action") {
+      const body = method === "GET" ? {} : await bodyJson(req);
       if (!externalAllowed(req, url, body, room)) return json(res, 403, { error: "外部接口密钥不正确" }, headers);
       const seat = Number(body.seat ?? url.searchParams.get("seat") ?? room.state.current);
       if (!room.started) return json(res, 409, { error: "等待玩家入座" }, headers);
       if (!Number.isInteger(seat) || seat < 0 || seat >= room.playerCount) return json(res, 400, { error: "座位不正确" }, headers);
       if (room.state.current !== seat) return json(res, 409, { error: "还没轮到这个座位" }, headers);
 
-      const action = resolveActionInput(room.state, body.action || body.id || body, seat);
+      const queryAction = url.searchParams.get("id") || url.searchParams.get("action");
+      const action = resolveActionInput(room.state, body.action || body.id || queryAction || body, seat);
       if (!action) return json(res, 400, { error: "动作不在合法动作列表中" }, headers);
       const result = applyAction(room.state, action);
       if (!result.ok) return json(res, 400, { error: result.reason || "这步不合法" }, headers);
       room.state = result.state;
       room.updatedAt = Date.now();
       broadcast(room);
-      return json(res, 200, { room: publicRoom(room), applied: action }, headers);
+      return json(res, 200, {
+        ok: true,
+        applied: compactAction(action),
+        action,
+        next: room.state.current,
+        room: publicRoom(room),
+        state: externalStatePayload(room, room.state.current).ai
+      }, headers);
     }
 
     return json(res, 404, { error: "未知外部接口" }, headers);
