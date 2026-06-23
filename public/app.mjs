@@ -255,6 +255,24 @@ function externalStateUrl() {
   return new URL(onlineRoom.external.stateUrl, window.location.origin).href;
 }
 
+function absoluteExternalUrl(value) {
+  return value ? new URL(value, window.location.origin).href : "";
+}
+
+function externalAccessText() {
+  const external = onlineRoom?.external;
+  if (!external) return "";
+  const seat = Number(external.seat ?? 1);
+  return [
+    "墙路棋外部玩家接入链接",
+    `座位：玩家 ${seat + 1}`,
+    `加入：${absoluteExternalUrl(external.joinUrl || external.joinPath)}`,
+    `读局面：${absoluteExternalUrl(external.stateUrl || external.statePath)}`,
+    `落子模板：${absoluteExternalUrl(external.actionTemplateUrl || external.actionTemplatePath)}`,
+    "步骤：先打开“加入”，再打开“读局面”。轮到该座位时，从 legalActions 里选一个 id，把落子模板里的 ACTION_ID 换成它。"
+  ].join("\n");
+}
+
 async function createRoom() {
   try {
     const room = await api("/api/rooms", {
@@ -701,10 +719,10 @@ els.copyRoom.addEventListener("click", async () => {
   showToast("房间码已复制");
 });
 els.copyExternal.addEventListener("click", async () => {
-  const url = externalStateUrl();
-  if (!url) return;
-  await navigator.clipboard?.writeText(url);
-  showToast("外部接口链接已复制");
+  const text = externalAccessText() || externalStateUrl();
+  if (!text) return;
+  await navigator.clipboard?.writeText(text);
+  showToast("外部接入链接已复制");
 });
 
 render();
