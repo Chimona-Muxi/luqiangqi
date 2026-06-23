@@ -26,7 +26,10 @@ const contentTypes = {
 function json(res, status, payload, headers = {}) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
-    "Cache-Control": "no-store",
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    "Surrogate-Control": "no-store",
     ...headers
   });
   res.end(JSON.stringify(payload));
@@ -266,6 +269,8 @@ function compactAction(action) {
 function externalStatePayload(room, requestedSeat, origin = "") {
   const seat = normalizeSeat(room, requestedSeat);
   const endpoints = externalEndpoints(room, seat, origin);
+  const serverNow = Date.now();
+  const freshStatePath = `${endpoints.statePath}&fresh=${serverNow}`;
   const rawAi = publicExternalState(room.state, seat);
   const canAct = room.started && room.state.current === seat && !room.state.winner;
   const legalActions = canAct ? rawAi.legalActions : [];
@@ -288,8 +293,12 @@ function externalStatePayload(room, requestedSeat, origin = "") {
   return {
     ok: true,
     room: publicRoom(room),
+    serverNow,
+    roomUpdatedAt: room.updatedAt,
     external: {
       ...endpoints,
+      freshStateUrl: withOrigin(origin, freshStatePath),
+      freshStatePath,
       joinExample: {
         url: endpoints.joinUrl,
         path: endpoints.joinPath
@@ -313,7 +322,10 @@ function externalStatePayload(room, requestedSeat, origin = "") {
       isTurn: room.state.current === seat,
       seatOccupied: Boolean(room.seats[seat]?.clientId),
       seatConnected: Boolean(room.seats[seat]?.connected),
-      waitingReason
+      waitingReason,
+      serverNow,
+      roomUpdatedAt: room.updatedAt,
+      moveHistory: room.state.moveHistory || []
     }
   };
 }

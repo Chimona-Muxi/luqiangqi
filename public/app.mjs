@@ -319,9 +319,9 @@ function externalAccessText() {
     "墙路棋外部玩家接入链接",
     `座位：玩家 ${seat + 1}`,
     `加入：${absoluteExternalUrl(external.joinUrl || external.joinPath)}`,
-    `读局面：${absoluteExternalUrl(external.stateUrl || external.statePath)}`,
+    `读局面：${absoluteExternalUrl(external.freshStateUrl || external.freshStatePath || external.stateUrl || external.statePath)}`,
     `落子模板：${absoluteExternalUrl(external.actionTemplateUrl || external.actionTemplatePath)}`,
-    "步骤：先打开“加入”，再打开“读局面”。轮到该座位时，从 legalActions 里选一个 id，把落子模板里的 ACTION_ID 换成它。"
+    "步骤：先打开“加入”，再打开“读局面”。轮到该座位时，从 legalActions 里选一个 id，把落子模板里的 ACTION_ID 换成它。如果读到的 serverNow 没变，请重新打开读局面链接。"
   ].join("\n");
 }
 
