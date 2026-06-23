@@ -94,6 +94,7 @@ let aiTimer = null;
 let aiRequestId = 0;
 let toastTimer = null;
 
+const activeRoomKey = "qiangluqi-active-room";
 const clientId = getClientId();
 
 function getClientId() {
@@ -212,12 +213,34 @@ function closeEvents() {
   eventSource = null;
 }
 
+function readActiveRoom() {
+  try {
+    return JSON.parse(localStorage.getItem(activeRoomKey) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveRoom(room, role = onlineRoomRole) {
+  if (!room?.code || mode !== "online" || room.mySeat < 0) return;
+  localStorage.setItem(activeRoomKey, JSON.stringify({
+    code: room.code,
+    role,
+    savedAt: Date.now()
+  }));
+}
+
+function clearActiveRoom() {
+  localStorage.removeItem(activeRoomKey);
+}
+
 function resetOnlineLobby() {
   aiRequestId += 1;
   closeEvents();
   onlineRoom = null;
   onlineStep = "home";
   onlineRoomRole = "host";
+  clearActiveRoom();
   game = createInitialState({
     playerCount: Number(els.onlinePlayerCount?.value || 2),
     mode: "online"
@@ -229,6 +252,7 @@ function resetOnlineLobby() {
 function withRoomState(room) {
   onlineRoom = room;
   game = room.state;
+  saveActiveRoom(room);
   render();
 }
 
@@ -243,11 +267,39 @@ async function api(path, payload) {
   return data;
 }
 
+async function fetchRoom(code) {
+  const response = await fetch(`/api/rooms/${code}?clientId=${encodeURIComponent(clientId)}`);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "房间不存在");
+  return data;
+}
+
 function connectRoomEvents(code) {
   closeEvents();
   eventSource = new EventSource(`/events/${code}?clientId=${encodeURIComponent(clientId)}`);
   eventSource.onmessage = (event) => withRoomState(JSON.parse(event.data));
   eventSource.onerror = () => showToast("联机同步正在重连");
+}
+
+async function restoreActiveRoom({ quiet = false } = {}) {
+  const saved = readActiveRoom();
+  if (!saved?.code) return false;
+
+  try {
+    const room = await fetchRoom(saved.code);
+    if (room.mySeat < 0) throw new Error("座位已失效");
+    mode = "online";
+    onlineRoomRole = saved.role || (room.mySeat === 0 ? "host" : "guest");
+    onlineStep = "room";
+    withRoomState(room);
+    connectRoomEvents(room.code);
+    if (!quiet) showToast("已回到房间");
+    return true;
+  } catch {
+    clearActiveRoom();
+    if (!quiet) showToast("原房间已失效");
+    return false;
+  }
 }
 
 function externalStateUrl() {
@@ -283,6 +335,7 @@ async function createRoom() {
     onlineRoomRole = "host";
     onlineStep = "room";
     withRoomState(room);
+    saveActiveRoom(room, onlineRoomRole);
     connectRoomEvents(room.code);
     showToast("房间已创建");
   } catch (error) {
@@ -301,6 +354,7 @@ async function joinRoom() {
     onlineRoomRole = "guest";
     onlineStep = "room";
     withRoomState(room);
+    saveActiveRoom(room, onlineRoomRole);
     connectRoomEvents(room.code);
     showToast("已加入房间");
   } catch (error) {
@@ -631,11 +685,14 @@ els.modeTabs.addEventListener("click", (event) => {
   mode = button.dataset.mode;
   if (mode === "online") {
     aiRequestId += 1;
-    game = createInitialState({ playerCount: Number(els.onlinePlayerCount.value), mode: "online" });
-    onlineRoom = null;
-    onlineStep = "home";
-    closeEvents();
-    render();
+    restoreActiveRoom({ quiet: true }).then((restored) => {
+      if (restored) return;
+      game = createInitialState({ playerCount: Number(els.onlinePlayerCount.value), mode: "online" });
+      onlineRoom = null;
+      onlineStep = "home";
+      closeEvents();
+      render();
+    });
     return;
   }
   if (mode === "model") {
@@ -725,4 +782,6 @@ els.copyExternal.addEventListener("click", async () => {
   showToast("外部接入链接已复制");
 });
 
-render();
+restoreActiveRoom({ quiet: true }).then((restored) => {
+  if (!restored) render();
+});

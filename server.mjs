@@ -120,6 +120,22 @@ function addExternalSeat(room, seatIndex, clientId, name) {
   return target;
 }
 
+function setSeatConnected(room, clientId, connected) {
+  const seat = room.seats.find((item) => item.clientId === clientId);
+  if (!seat) return false;
+  seat.connected = connected;
+  room.updatedAt = Date.now();
+  return true;
+}
+
+function hasActiveStream(code, clientId) {
+  if (!clientId) return false;
+  for (const entry of roomStreams(code)) {
+    if (entry.clientId === clientId) return true;
+  }
+  return false;
+}
+
 function requestOrigin(req) {
   const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
   const proto = forwardedProto || (req.socket.encrypted ? "https" : "http");
@@ -390,6 +406,7 @@ async function handleApi(req, res, url) {
 
     if (method === "GET" && parts.length === 3) {
       const clientId = url.searchParams.get("clientId") || "";
+      if (clientId) setSeatConnected(room, clientId, true);
       return json(res, 200, publicRoom(room, clientId));
     }
 
@@ -481,13 +498,12 @@ const server = createServer(async (req, res) => {
     });
     const entry = { res, clientId };
     roomStreams(code).add(entry);
+    if (setSeatConnected(room, clientId, true)) broadcast(room);
     sendStream(entry, room);
 
     req.on("close", () => {
       roomStreams(code).delete(entry);
-      const seat = room.seats.find((item) => item.clientId === clientId);
-      if (seat) seat.connected = false;
-      broadcast(room);
+      if (!hasActiveStream(code, clientId) && setSeatConnected(room, clientId, false)) broadcast(room);
     });
     return;
   }
