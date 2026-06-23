@@ -68,9 +68,6 @@ const els = {
   roomState: document.querySelector("#roomStateText"),
   roomCode: document.querySelector("#roomCodeText"),
   copyRoom: document.querySelector("#copyRoomButton"),
-  hostedAiCard: document.querySelector("#hostedAiCard"),
-  hostedAiText: document.querySelector("#hostedAiText"),
-  addHostedAi: document.querySelector("#addHostedAiButton"),
   externalCard: document.querySelector("#externalCard"),
   externalLinkText: document.querySelector("#externalLinkText"),
   copyExternal: document.querySelector("#copyExternalButton"),
@@ -365,23 +362,6 @@ async function joinRoom() {
   }
 }
 
-async function addHostedAi() {
-  if (!onlineRoom) return;
-  try {
-    const room = await api(`/api/rooms/${onlineRoom.code}/hosted-ai`, {
-      clientId,
-      seat: 1,
-      name: "托管 AI",
-      provider: "api",
-      difficulty: "hard"
-    });
-    withRoomState(room);
-    showToast("托管 AI 已加入");
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
 async function sendAction(action) {
   if (!canAct()) {
     const reason = actionLockedReason();
@@ -665,9 +645,6 @@ function renderStatus() {
   els.modelLocalStep.classList.toggle("hidden", modelStep !== "local");
   els.modelApiStep.classList.toggle("hidden", modelStep !== "api");
   els.roomCard.classList.toggle("hidden", !onlineRoom || onlineStep !== "room");
-  const openSeat = onlineRoom?.seats?.some((seat, index) => index > 0 && !seat.occupied);
-  const canAddHostedAi = onlineRoom?.mySeat === 0 && onlineStep === "room" && openSeat;
-  els.hostedAiCard.classList.toggle("hidden", !canAddHostedAi);
   els.externalCard.classList.toggle("hidden", !onlineRoom?.external || onlineStep !== "room");
   els.roomStepTitle.textContent = onlineRoomRole === "guest" ? "已加入房间" : "房间已创建";
   els.roomState.textContent = onlineRoom
@@ -676,7 +653,6 @@ function renderStatus() {
       : `等待玩家 ${occupied}/${onlineRoom.playerCount}`
     : "等待玩家";
   els.roomCode.textContent = onlineRoom?.code || "-----";
-  els.hostedAiText.textContent = openSeat ? "填入玩家 2" : "已就绪";
   els.externalLinkText.textContent = onlineRoom?.external ? "外部可接入" : "未启用";
   els.setupPanel.classList.toggle("hidden", mode === "online" || mode === "model");
   els.onlinePanel.classList.toggle("hidden", mode !== "online");
@@ -781,7 +757,6 @@ els.startApiModel.addEventListener("click", () => {
   });
 });
 els.createRoom.addEventListener("click", createRoom);
-els.addHostedAi.addEventListener("click", addHostedAi);
 els.chooseJoin.addEventListener("click", () => {
   onlineStep = "join";
   onlineRoom = null;
