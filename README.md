@@ -71,6 +71,8 @@ LQQ_LLM_BASE_URL=https://api.openai.com/v1
 LQQ_LLM_API_URL=https://example.com/v1/chat/completions
 ```
 
+联机房间支持“托管 AI”。房主创建房间后点击“托管 AI”的“添加”，服务器会把玩家二变成自动对手。它会在每次轮到自己时读取最新棋局、选择合法动作并直接落子；如果云端大模型没有配置或调用失败，会自动退回高速策略 AI，避免对局卡住。
+
 联机房间还提供外部对战接口。创建房间的返回数据里会包含 `external.stateUrl`、`external.actionUrl` 和 `external.key`，外部程序可以读取局面、选择 `legalActions` 中的 id，再提交动作。
 
 外部 AI 收到的局面会包含规则说明、当前棋局、合法动作列表和返回格式。模型不需要自己计算坐标，只要从 `legalActions` 里选择一个 `id`，服务器会校验并执行落子。

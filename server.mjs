@@ -13,6 +13,7 @@ const host = process.env.HOST || (process.env.PORT ? "0.0.0.0" : "127.0.0.1");
 
 const rooms = new Map();
 const streams = new Map();
+const hostedBotTimers = new Map();
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -123,9 +124,37 @@ function addExternalSeat(room, seatIndex, clientId, name) {
   return target;
 }
 
+function addHostedBotSeat(room, seatIndex, name, options = {}) {
+  const target = Number.isInteger(seatIndex) ? seatIndex : room.seats.findIndex((seat, index) => index > 0 && !seat.clientId);
+  if (target < 0 || target >= room.playerCount) return -1;
+  if (room.seats[target].clientId) return -1;
+
+  const clientId = `hosted:${room.code}:${target}`;
+  const displayName = cleanName(name, `托管 AI ${target + 1}`);
+  room.seats[target] = {
+    clientId,
+    name: displayName,
+    connected: true,
+    hosted: true
+  };
+  room.hostedBots[target] = {
+    provider: options.provider || "api",
+    difficulty: options.difficulty || "hard",
+    name: displayName
+  };
+  room.state.players[target].name = displayName;
+  room.started = room.seats.every((seat) => Boolean(seat.clientId));
+  room.updatedAt = Date.now();
+  return target;
+}
+
 function setSeatConnected(room, clientId, connected) {
   const seat = room.seats.find((item) => item.clientId === clientId);
   if (!seat) return false;
+  if (seat.hosted) {
+    seat.connected = true;
+    return true;
+  }
   seat.connected = connected;
   room.updatedAt = Date.now();
   return true;
@@ -202,6 +231,7 @@ function publicRoom(room, clientId = "") {
       name: seat.name || `玩家 ${index + 1}`,
       occupied: Boolean(seat.clientId),
       connected: Boolean(seat.connected),
+      hosted: Boolean(seat.hosted),
       color: room.state.players[index]?.color
     })),
     state: room.state
@@ -231,6 +261,7 @@ function createRoom(playerCount, hostName, clientId) {
     playerCount: count,
     started: false,
     seats: Array.from({ length: count }, () => ({ clientId: "", name: "", connected: false })),
+    hostedBots: {},
     state: createInitialState({
       playerCount: count,
       mode: "online",
@@ -243,6 +274,44 @@ function createRoom(playerCount, hostName, clientId) {
   rooms.set(code, room);
   addSeat(room, clientId, hostName);
   return room;
+}
+
+function currentHostedBot(room) {
+  if (!room.started || room.state.winner !== null) return null;
+  const seatIndex = room.state.current;
+  const bot = room.hostedBots?.[seatIndex];
+  return bot ? { seatIndex, bot } : null;
+}
+
+function scheduleHostedBot(room) {
+  const current = currentHostedBot(room);
+  if (!current || hostedBotTimers.has(room.code)) return;
+
+  const scheduledTurn = room.state.turn;
+  const scheduledSeat = current.seatIndex;
+  hostedBotTimers.set(room.code, setTimeout(async () => {
+    hostedBotTimers.delete(room.code);
+    const liveRoom = rooms.get(room.code);
+    const liveBot = liveRoom ? currentHostedBot(liveRoom) : null;
+    if (!liveRoom || !liveBot || liveRoom.state.turn !== scheduledTurn || liveRoom.state.current !== scheduledSeat) return;
+
+    try {
+      const decision = await chooseExternalAiAction(liveRoom.state, {
+        provider: liveBot.bot.provider,
+        difficulty: liveBot.bot.difficulty,
+        config: {}
+      });
+      if (!decision.action) return;
+      const result = applyAction(liveRoom.state, decision.action);
+      if (!result.ok) return;
+      liveRoom.state = result.state;
+      liveRoom.updatedAt = Date.now();
+      broadcast(liveRoom);
+      scheduleHostedBot(liveRoom);
+    } catch {
+      scheduleHostedBot(liveRoom);
+    }
+  }, 650));
 }
 
 function externalAllowed(req, url, body, room) {
@@ -390,6 +459,7 @@ async function handleApi(req, res, url) {
       room.state = result.state;
       room.updatedAt = Date.now();
       broadcast(room);
+      scheduleHostedBot(room);
       return json(res, 200, {
         ok: true,
         applied: compactAction(action),
@@ -429,6 +499,24 @@ async function handleApi(req, res, url) {
       const seat = addSeat(room, clientId, body.name);
       if (seat < 0) return json(res, 409, { error: "房间已满" });
       broadcast(room);
+      scheduleHostedBot(room);
+      return json(res, 200, publicRoom(room, clientId));
+    }
+
+    if (method === "POST" && parts[3] === "hosted-ai") {
+      const body = await bodyJson(req);
+      const clientId = String(body.clientId || "");
+      if (!clientId) return json(res, 400, { error: "缺少客户端标识" });
+      const hostSeat = room.seats.findIndex((item) => item.clientId === clientId);
+      if (hostSeat !== 0) return json(res, 403, { error: "只有房主可以添加托管 AI" });
+      const seatIndex = parseSeat(body.seat, room.seats.findIndex((seat, index) => index > 0 && !seat.clientId));
+      const seat = addHostedBotSeat(room, seatIndex, body.name || "托管 AI", {
+        provider: body.provider,
+        difficulty: body.difficulty
+      });
+      if (seat < 0) return json(res, 409, { error: "这个座位不可用" });
+      broadcast(room);
+      scheduleHostedBot(room);
       return json(res, 200, publicRoom(room, clientId));
     }
 
@@ -445,6 +533,7 @@ async function handleApi(req, res, url) {
       room.state = result.state;
       room.updatedAt = Date.now();
       broadcast(room);
+      scheduleHostedBot(room);
       return json(res, 200, publicRoom(room, clientId));
     }
   }
