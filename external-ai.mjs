@@ -11,8 +11,9 @@ import { chooseAiAction } from "./public/ai.mjs";
 
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_OLLAMA_MODEL = "qwen2.5:14b";
-const DEFAULT_API_MODEL = "gpt-4o-mini";
-const REQUEST_TIMEOUT_MS = 14000;
+const DEFAULT_API_MODEL = "deepseek-chat";
+const REQUEST_TIMEOUT_MS = 30000;
+const API_REQUEST_TIMEOUT_MS = 75000;
 const WALL_PROMPT_LIMIT = 36;
 
 export const EXTERNAL_RULES = [
@@ -260,20 +261,41 @@ function resolveModelAction(state, modelText, playerId, actions) {
   return resolveActionInput(state, parsed || modelText, playerId);
 }
 
-async function fetchWithTimeout(url, options, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function fetchTextWithTimeout(url, options, timeoutMs = REQUEST_TIMEOUT_MS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const text = await response.text();
+    return { response, text };
   } finally {
     clearTimeout(timer);
   }
 }
 
+function parseJsonResponse(text, label) {
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`${label} 返回了无法解析的数据`);
+  }
+}
+
+function responseError(label, response, text) {
+  let detail = String(text || "").slice(0, 180);
+  try {
+    const data = JSON.parse(text);
+    detail = data?.error?.message || data?.message || detail;
+  } catch {
+    // keep plain text detail
+  }
+  return `${label} 返回 ${response.status}${detail ? `：${detail}` : ""}`;
+}
+
 async function callOllama(messages, config = {}) {
   const baseUrl = normalizeBaseUrl(config.ollamaUrl || process.env.LQQ_OLLAMA_URL || process.env.OLLAMA_HOST, DEFAULT_OLLAMA_URL);
   const model = config.ollamaModel || process.env.LQQ_OLLAMA_MODEL || DEFAULT_OLLAMA_MODEL;
-  const response = await fetchWithTimeout(`${baseUrl}/api/chat`, {
+  const { response, text } = await fetchTextWithTimeout(`${baseUrl}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -285,9 +307,9 @@ async function callOllama(messages, config = {}) {
         num_ctx: 4096
       }
     })
-  });
-  if (!response.ok) throw new Error(`Ollama 返回 ${response.status}`);
-  const data = await response.json();
+  }, Number(config.timeoutMs || process.env.LQQ_OLLAMA_TIMEOUT_MS || REQUEST_TIMEOUT_MS));
+  if (!response.ok) throw new Error(responseError("Ollama", response, text));
+  const data = parseJsonResponse(text, "Ollama");
   return data?.message?.content || data?.response || "";
 }
 
@@ -295,7 +317,7 @@ function apiChatUrl(config = {}) {
   if (config.apiUrl) return config.apiUrl;
   if (process.env.LQQ_LLM_API_URL) return process.env.LQQ_LLM_API_URL;
   if (process.env.OPENAI_API_URL) return process.env.OPENAI_API_URL;
-  const base = normalizeBaseUrl(config.apiBaseUrl || process.env.LQQ_LLM_BASE_URL || process.env.OPENAI_BASE_URL, "https://api.openai.com/v1");
+  const base = normalizeBaseUrl(config.apiBaseUrl || process.env.LQQ_LLM_BASE_URL || process.env.OPENAI_BASE_URL, "https://api.deepseek.com");
   return base.endsWith("/chat/completions") ? base : `${base}/chat/completions`;
 }
 
@@ -308,7 +330,7 @@ async function callApiModel(messages, config = {}) {
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
-  const response = await fetchWithTimeout(apiChatUrl(config), {
+  const { response, text } = await fetchTextWithTimeout(apiChatUrl(config), {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -316,9 +338,9 @@ async function callApiModel(messages, config = {}) {
       messages,
       temperature: Number(config.temperature || process.env.LQQ_LLM_TEMPERATURE || 0.15)
     })
-  }, Number(config.timeoutMs || process.env.LQQ_LLM_TIMEOUT_MS || REQUEST_TIMEOUT_MS));
-  if (!response.ok) throw new Error(`API 返回 ${response.status}`);
-  const data = await response.json();
+  }, Number(config.timeoutMs || process.env.LQQ_LLM_TIMEOUT_MS || API_REQUEST_TIMEOUT_MS));
+  if (!response.ok) throw new Error(responseError("API", response, text));
+  const data = parseJsonResponse(text, "API");
   return data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || "";
 }
 

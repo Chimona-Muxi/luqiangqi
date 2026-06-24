@@ -138,6 +138,11 @@ function providerName(value) {
   }[value] || "外脑";
 }
 
+function shortErrorNote(value) {
+  const text = String(value || "").trim();
+  return text.length > 80 ? `${text.slice(0, 80)}...` : text;
+}
+
 function showToast(message) {
   clearTimeout(toastTimer);
   els.toast.textContent = message;
@@ -415,11 +420,13 @@ function queueAi() {
         });
         action = result.action;
         note = result.note || "";
-        if (result.source === "builtin-fallback") showToast("外脑暂不可用，已用高速 AI");
+        if (result.source === "builtin-fallback") {
+          showToast(shortErrorNote(note) ? `外脑暂不可用：${shortErrorNote(note)}` : "外脑暂不可用，已用高速 AI");
+        }
       } catch (error) {
         action = chooseAiAction(snapshot, snapshot.aiDifficulty);
         note = error.message;
-        showToast("外脑未响应，已用高速 AI");
+        showToast(shortErrorNote(note) ? `外脑未响应：${shortErrorNote(note)}` : "外脑未响应，已用高速 AI");
       }
     }
 

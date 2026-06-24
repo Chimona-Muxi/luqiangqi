@@ -61,8 +61,8 @@ LQQ_OLLAMA_URL=http://127.0.0.1:11434 LQQ_OLLAMA_MODEL=qwen2.5:14b node server.m
 
 ```text
 LQQ_LLM_API_KEY=你的 API key
-LQQ_LLM_MODEL=模型名
-LQQ_LLM_BASE_URL=https://api.openai.com/v1
+LQQ_LLM_MODEL=deepseek-chat
+LQQ_LLM_BASE_URL=https://api.deepseek.com
 ```
 
 如果是其他 OpenAI 兼容服务，也可以直接设置完整地址：
