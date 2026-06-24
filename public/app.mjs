@@ -315,16 +315,14 @@ function externalAccessText() {
   const external = onlineRoom?.external;
   if (!external) return "";
   const seat = Number(external.seat ?? 1);
-  const stateUrl = absoluteExternalUrl(external.stateUrl || external.statePath);
-  const freshStateUrl = stateUrl ? new URL(stateUrl) : null;
-  if (freshStateUrl) freshStateUrl.searchParams.set("fresh", String(Date.now()));
+  const controlUrl = absoluteExternalUrl(external.controlUrl || external.controlPath);
+  const freshControlUrl = controlUrl ? new URL(controlUrl) : null;
+  if (freshControlUrl) freshControlUrl.searchParams.set("fresh", String(Date.now()));
   return [
-    "墙路棋外部玩家接入链接",
+    "墙路棋外部玩家控制页",
     `座位：玩家 ${seat + 1}`,
-    `加入：${absoluteExternalUrl(external.joinUrl || external.joinPath)}`,
-    `读局面：${freshStateUrl?.href || ""}`,
-    `落子模板：${absoluteExternalUrl(external.actionTemplateUrl || external.actionTemplatePath)}`,
-    "步骤：先打开“加入”，再打开“读局面”。每次需要它重读局面时，请重新点本页面的复制按钮，把新的读局面链接发过去。轮到该座位时，从 legalActions 里选一个 id，把落子模板里的 ACTION_ID 换成它。"
+    `${freshControlUrl?.href || ""}`,
+    "打开后页面里会显示当前局面、刷新链接和可直接打开的合法动作链接。"
   ].join("\n");
 }
 

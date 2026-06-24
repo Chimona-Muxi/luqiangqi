@@ -71,9 +71,11 @@ LQQ_LLM_BASE_URL=https://api.openai.com/v1
 LQQ_LLM_API_URL=https://example.com/v1/chat/completions
 ```
 
-联机房间还提供外部对战接口。创建房间的返回数据里会包含 `external.stateUrl`、`external.actionUrl` 和 `external.key`，外部程序可以读取局面、选择 `legalActions` 中的 id，再提交动作。
+联机房间还提供外部玩家接口。创建房间后，网页里的“外部接口”复制按钮只会复制一个控制页链接；把这条链接发给 ChatGPT 或其他外部玩家即可。
 
-外部 AI 收到的局面会包含规则说明、当前棋局、合法动作列表和返回格式。模型不需要自己计算坐标，只要从 `legalActions` 里选择一个 `id`，服务器会校验并执行落子。
+控制页会自动让外部玩家入座，并在页面里显示当前局面、刷新链接、JSON 状态链接和可直接打开的合法动作链接。外部模型不需要自己拼 `fresh` 或 `ACTION_ID`，轮到它时直接打开页面里对应动作的链接即可。
+
+外部 AI 收到的 JSON 局面会包含规则说明、当前棋局、合法动作列表和返回格式。模型不需要自己计算坐标，只要从 `legalActions` 里选择一个 `id`，服务器会校验并执行落子。
 
 如果外部 AI 只能打开链接、不能稳定发送 POST，也可以使用 GET 形式：
 
@@ -83,9 +85,7 @@ GET /api/external/rooms/房间码/state?key=密钥&seat=1
 GET /api/external/rooms/房间码/action?key=密钥&seat=1&id=move:E8
 ```
 
-`state?seat=1` 会返回玩家二视角。未入座、未开局或还没轮到玩家二时，`legalActions` 会为空，并给出 `joinUrl`、`stateUrl` 和 `waitingReason`；轮到该座位时才会返回可提交的 `legalActions`。如果 `state` 和 `join` 没有写 `seat`，服务器会优先按外部玩家座位处理，默认是玩家二。
-
-网页里创建房间后，点击“外部接口”的复制按钮，会复制一组完整链接：加入、读局面、落子模板。读局面链接会在复制时自动带上新的 `fresh` 参数，可以直接发给只会打开链接、不能自己拼 URL 的外部模型使用。
+`state?seat=1` 会返回玩家二视角。未入座、未开局或还没轮到玩家二时，`legalActions` 会为空，并给出 `waitingReason`；轮到该座位时才会返回可提交的 `legalActions`。如果 `state` 和 `join` 没有写 `seat`，服务器会优先按外部玩家座位处理，默认是玩家二。
 
 `state` 响应里还会返回 `external.nextStateUrl`。如果当前读局面链接是 `fresh=123`，下一次会给出 `fresh=124`，外部模型可以直接打开返回里的完整链接继续刷新。轮到该座位时，每个 `legalActions` 条目也会带完整的 `url`，可以直接打开落子，不需要手动替换 `ACTION_ID`。
 

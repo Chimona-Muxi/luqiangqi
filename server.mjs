@@ -35,6 +35,17 @@ function json(res, status, payload, headers = {}) {
   res.end(JSON.stringify(payload));
 }
 
+function html(res, status, content) {
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, s-maxage=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+    "Surrogate-Control": "no-store"
+  });
+  res.end(content);
+}
+
 function corsHeaders() {
   return {
     "Access-Control-Allow-Origin": process.env.LQQ_EXTERNAL_ORIGIN || "*",
@@ -150,6 +161,15 @@ function withOrigin(origin, path) {
   return origin ? new URL(path, origin).href : path;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function defaultExternalSeat(room) {
   const externalSeat = room.seats.findIndex((seat) => String(seat.clientId || "").startsWith(`external:${room.code}:`));
   if (externalSeat >= 0) return externalSeat;
@@ -175,8 +195,11 @@ function externalEndpoints(room, requestedSeat = defaultExternalSeat(room), orig
   const joinPath = `${base}/join?key=${key}&seat=${seat}&name=GPT`;
   const actionPath = `${base}/action`;
   const actionTemplatePath = `${actionPath}?key=${key}&seat=${seat}&id=ACTION_ID`;
+  const controlPath = `/external/${room.code}?key=${key}&seat=${seat}`;
 
   return {
+    controlUrl: withOrigin(origin, controlPath),
+    controlPath,
     stateUrl: withOrigin(origin, statePath),
     statePath,
     actionUrl: withOrigin(origin, actionPath),
@@ -275,6 +298,10 @@ function freshPair(value, fallback) {
   return { current: null, next: fallback };
 }
 
+function externalControlPath(room, key, seat, fresh) {
+  return `/external/${room.code}?key=${encodeURIComponent(key)}&seat=${seat}&fresh=${fresh}`;
+}
+
 function externalStatePayload(room, requestedSeat, origin = "", freshValue = null) {
   const seat = normalizeSeat(room, requestedSeat);
   const endpoints = externalEndpoints(room, seat, origin);
@@ -356,6 +383,93 @@ function externalStatePayload(room, requestedSeat, origin = "", freshValue = nul
       moveHistory: room.state.moveHistory || []
     }
   };
+}
+
+function externalControlPage(room, seat, origin, freshValue) {
+  const payload = externalStatePayload(room, seat, origin, freshValue);
+  const playerRows = payload.ai.players
+    .map((player) => `<li>${escapeHtml(player.name)}：${escapeHtml(player.cell)}，目标 ${escapeHtml(player.goal)}，剩余 ${player.walls} 墙，最短路 ${player.shortestPath}</li>`)
+    .join("");
+  const wallText = [
+    ...(payload.ai.walls.h || []).map((cell) => `h:${cell}`),
+    ...(payload.ai.walls.v || []).map((cell) => `v:${cell}`)
+  ].join(", ") || "无";
+  const actionRows = payload.ai.legalActions.length
+    ? payload.ai.legalActions.map((action) => `<li><a href="${escapeHtml(action.url)}">${escapeHtml(action.id)}</a><span>${escapeHtml(action.text)}</span></li>`).join("")
+    : `<li>${escapeHtml(payload.ai.waitingReason || "当前没有可执行动作。")}</li>`;
+  const nextPath = externalControlPath(room, room.externalKey, payload.ai.requestedSeat, payload.nextFresh);
+  const nextUrl = withOrigin(origin, nextPath);
+  const stateUrl = payload.external.nextStateUrl || payload.external.freshStateUrl;
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>墙路棋外部玩家 ${escapeHtml(room.code)}</title>
+  <style>
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1d2a26; background: #f6f8f4; }
+    main { max-width: 760px; margin: 0 auto; padding: 24px; }
+    section { margin: 14px 0; padding: 16px; border: 1px solid #d8e0d6; border-radius: 8px; background: white; }
+    h1 { margin: 0 0 8px; font-size: 24px; }
+    h2 { margin: 0 0 10px; font-size: 16px; }
+    a { color: #16745f; overflow-wrap: anywhere; }
+    code { padding: 2px 5px; border-radius: 5px; background: #edf2ea; }
+    ul { margin: 8px 0 0; padding-left: 20px; }
+    li { margin: 8px 0; }
+    .status { font-size: 18px; font-weight: 700; }
+    .muted { color: #65746f; }
+    .actions li { display: grid; gap: 2px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>墙路棋外部玩家</h1>
+    <p class="muted">房间 <code>${escapeHtml(room.code)}</code>，座位 <code>${payload.ai.requestedSeat + 1}</code>，serverNow <code>${payload.serverNow}</code></p>
+    <section>
+      <h2>当前状态</h2>
+      <div class="status">${payload.ai.isTurn ? "轮到你了" : escapeHtml(payload.ai.waitingReason || "等待中")}</div>
+      <p>回合：${payload.ai.turn}；当前玩家：${payload.ai.current + 1}；房间：${room.started ? "已开始" : "等待入座"}</p>
+      <p>已放墙：${escapeHtml(wallText)}</p>
+      <ul>${playerRows}</ul>
+    </section>
+    <section>
+      <h2>刷新</h2>
+      <p><a href="${escapeHtml(nextUrl)}">刷新局面</a></p>
+      <p class="muted">下一次 fresh：<code>${payload.nextFresh}</code></p>
+      <p class="muted">JSON 状态：<a href="${escapeHtml(stateUrl)}">${escapeHtml(stateUrl)}</a></p>
+    </section>
+    <section>
+      <h2>合法动作</h2>
+      <ul class="actions">${actionRows}</ul>
+    </section>
+  </main>
+</body>
+</html>`;
+}
+
+function handleExternalControl(req, res, url) {
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts[0] !== "external" || !parts[1]) return false;
+
+  const code = parts[1].toUpperCase();
+  const room = rooms.get(code);
+  if (!room) {
+    html(res, 404, "<!doctype html><meta charset=\"utf-8\"><title>房间不存在</title><p>房间不存在或服务器刚刚重启。</p>");
+    return true;
+  }
+  if (!externalAllowed(req, url, {}, room)) {
+    html(res, 403, "<!doctype html><meta charset=\"utf-8\"><title>密钥不正确</title><p>外部接口密钥不正确。</p>");
+    return true;
+  }
+
+  const seatIndex = parseSeat(url.searchParams.get("seat"), defaultExternalSeat(room));
+  const botId = cleanName(url.searchParams.get("botId"), `bot-${seatIndex}`);
+  const clientId = `external:${room.code}:${botId}`;
+  addExternalSeat(room, seatIndex, clientId, url.searchParams.get("name") || "GPT");
+  broadcast(room);
+  html(res, 200, externalControlPage(room, seatIndex, requestOrigin(req), url.searchParams.get("fresh")));
+  return true;
 }
 
 async function handleApi(req, res, url) {
@@ -520,6 +634,8 @@ async function serveStatic(res, pathname) {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+
+  if (handleExternalControl(req, res, url)) return;
 
   if (req.method === "OPTIONS" && url.pathname.startsWith("/api/external/")) {
     res.writeHead(204, corsHeaders());
